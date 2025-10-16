@@ -3,6 +3,8 @@ import mysql from "mysql2";
 import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken"
+import { verify } from "crypto";
 
 dotenv.config();
 
@@ -27,6 +29,23 @@ db.connect((err) => {
   console.log("Conexión exitosa a la base de datos MySQL");
 });
 
+function VerificarToken(req, res, next){
+  const header = req.headers.authorizacion;
+
+  if(!header)
+    return res.status(401).json({message: "Token faltante"});
+
+  const token = header.split(" ")[1];
+
+  try{
+    const decoded = jwt.verify(token, process.env.jwt_secret);
+    req.usuario = decoded; // guarda los datos del usuario
+    next();
+  } catch (error){
+    res.status(403).json({message: "Token invalido o expirado"})
+  }
+}
+
 // Ruta de prueba
 app.get("/", (req, res) => {
   res.send("Servidor funcionando correctamente!");
@@ -40,10 +59,11 @@ app.get("/productos", (req, res) => {
     return res.json(data);
   });
 });
+
 // Ruta para registrar usuario
 app.post("/registro", async (req, res) => {
   const { nombre, email, password } = req.body;
-
+  console.log("Datos recibido", req.body);
   if (!nombre || !email || !password) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
@@ -73,7 +93,8 @@ app.post("/registro", async (req, res) => {
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password) return res.status(400).json({ error: "Faltan datos" });
+  if (!email || !password) 
+    return res.status(400).json({ error: "Faltan datos" });
 
   const sql = "SELECT * FROM usuarios WHERE email = ?";
   db.query(sql, [email], async (err, results) => {
@@ -86,12 +107,19 @@ app.post("/login", async (req, res) => {
     const passwordCorrecta = await bcrypt.compare(password, usuario.password);
     if (!passwordCorrecta) return res.status(400).json({ error: "Contraseña incorrecta" });
 
-    res.json({ message: "Login exitoso", usuario: { id: usuario.id, nombre: usuario.nombre, email: usuario.email } });
+    const token = jwt.sign(
+      {id: usuario.id, email: usuario.email},
+      process.env.jwt_secret,
+      {expiresIn: "2h"}
+    );
+    res.json({ message: "Login exitoso",
+       token,
+       usuario: { id: usuario.id, nombre: usuario.nombre, email: usuario.email } });
   });
 });
 
 // Subir un nuevo producto 
-app.post("/productos", (req, res) => {
+app.post("/productos", VerificarToken, (req, res) => {
   const { nombre, descripcion, categoria, precio, imagen } = req.body;
 
   const sql = "INSERT INTO productos (nombre, descripcion, categoria, precio, imagen) VALUES (?, ?, ?, ?, ?)";
